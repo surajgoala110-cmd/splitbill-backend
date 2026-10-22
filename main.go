@@ -31,11 +31,12 @@ func main() {
 	s := newStore(); mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, http.StatusOK, map[string]string{"status": "ok"}) })
 	mux.HandleFunc("/api/groups", s.groupsHandler); mux.HandleFunc("/api/groups/", s.groupHandler)
+	mux.HandleFunc("/groups", s.groupsHandler); mux.HandleFunc("/groups/", s.groupHandler)
 	log.Printf("splitbill API listening on :8080"); log.Fatal(http.ListenAndServe(":8080", mux))
 }
 
 func (s *Store) groupsHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/api/groups" { http.NotFound(w, r); return }
+	if r.URL.Path != "/api/groups" && r.URL.Path != "/groups" { http.NotFound(w, r); return }
 	if r.Method == http.MethodGet { s.RLock(); defer s.RUnlock(); result := make([]*Group, 0, len(s.groups)); for _, g := range s.groups { result = append(result, cloneGroup(g)) }; writeJSON(w, http.StatusOK, result); return }
 	if r.Method != http.MethodPost { methodNotAllowed(w); return }
 	var req createGroupRequest; if !decodeJSON(w, r, &req) { return }; if strings.TrimSpace(req.Name) == "" { writeError(w, http.StatusBadRequest, "name is required"); return }
@@ -43,11 +44,15 @@ func (s *Store) groupsHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Store) groupHandler(w http.ResponseWriter, r *http.Request) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/"); if len(parts) < 3 || parts[0] != "api" || parts[1] != "groups" { http.NotFound(w, r); return }
-	groupID := parts[2]; s.RLock(); _, ok := s.groups[groupID]; s.RUnlock(); if !ok { writeError(w, http.StatusNotFound, "group not found"); return }
-	if len(parts) == 3 { if r.Method != http.MethodGet { methodNotAllowed(w); return }; s.RLock(); g := cloneGroup(s.groups[groupID]); s.RUnlock(); writeJSON(w, http.StatusOK, g); return }
-	if len(parts) != 4 { http.NotFound(w, r); return }
-	switch parts[3] { case "members": s.membersHandler(w, r, groupID); case "expenses": s.expensesHandler(w, r, groupID); case "balances": s.summaryHandler(w, r, groupID, false); case "settlements": s.summaryHandler(w, r, groupID, true); default: http.NotFound(w, r) }
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 2 || (parts[0] != "api" && parts[0] != "groups") || (parts[0] == "api" && parts[1] != "groups") { http.NotFound(w, r); return }
+	groupIndex := 2
+	if parts[0] == "groups" { groupIndex = 1 }
+	if len(parts) <= groupIndex { http.NotFound(w, r); return }
+	groupID := parts[groupIndex]; s.RLock(); _, ok := s.groups[groupID]; s.RUnlock(); if !ok { writeError(w, http.StatusNotFound, "group not found"); return }
+	if len(parts) == groupIndex+1 { if r.Method != http.MethodGet { methodNotAllowed(w); return }; s.RLock(); g := cloneGroup(s.groups[groupID]); s.RUnlock(); writeJSON(w, http.StatusOK, g); return }
+	if len(parts) != groupIndex+2 { http.NotFound(w, r); return }
+	switch parts[groupIndex+1] { case "members": s.membersHandler(w, r, groupID); case "expenses": s.expensesHandler(w, r, groupID); case "balances": s.summaryHandler(w, r, groupID, false); case "settlements": s.summaryHandler(w, r, groupID, true); default: http.NotFound(w, r) }
 }
 
 func (s *Store) membersHandler(w http.ResponseWriter, r *http.Request, id string) {
